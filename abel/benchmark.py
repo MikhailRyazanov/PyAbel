@@ -28,11 +28,11 @@ class AbelTiming(object):
             (assuming 2D square arrays (n,n))
 
         select: list of str
-            list of transforms to benchmark select=['all',] (default) or 
+            list of transforms to benchmark select=['all',] (default) or
             choose transforms:
-            select=['basex', 'direct_Python', 'direct_C', 'hansenlaw', 
-                    'linbasex' 'onion_bordas, 'onion_peeling', 'two_point', 
-                    'three_point']
+            select=['basex', 'basex(var)', 'direct_Python', 'direct_C',
+                    'hansenlaw', 'linbasex' 'onion_bordas, 'onion_peeling',
+                    'two_point', 'three_point']
 
         n_max_bs: integer
             since the basis sets generation takes a long time,
@@ -40,7 +40,7 @@ class AbelTiming(object):
             for n > n_max_bs
 
         n_max_slow: integer
-            maximum n run for the "slow" transform methods, so far including 
+            maximum n run for the "slow" transform methods, so far including
             only the "direct_python" implementation.
         """
         from timeit import Timer, default_timer
@@ -50,6 +50,7 @@ class AbelTiming(object):
 
         transform = {
             'basex': basex.basex_core_transform,
+            'basex(var)': basex.basex_core_transform,
             'basex_bs': basex.get_bs_cached,
             'direct_Python': direct.direct_transform,
             'direct_C': direct.direct_transform,
@@ -67,11 +68,11 @@ class AbelTiming(object):
 
         # result dicts
         res = {}
-        res['bs'] = {'basex_bs': [], 'linbasex_bs': [], 'onion_peeling_bs': [], 
+        res['bs'] = {'basex_bs': [], 'linbasex_bs': [], 'onion_peeling_bs': [],
                      'two_point_bs': [], 'three_point_bs': []}
         res['forward'] = {'direct_Python': [], 'hansenlaw': []}
-        res['inverse'] = {'basex': [], 'direct_Python': [], 'hansenlaw': [],
-                          'linbasex': [],
+        res['inverse'] = {'basex': [], 'basex(var)': [], 'direct_Python': [],
+                          'hansenlaw': [], 'linbasex': [],
                           'onion_bordas': [], 'onion_peeling': [],
                           'two_point': [], 'three_point': []}
 
@@ -85,7 +86,7 @@ class AbelTiming(object):
                 if trans not in res['inverse'].keys():
                     raise ValueError("'{}' is not a valid transform method".
                                      format(trans), res['inverse'].keys())
-                     
+
             for direction in ['forward', 'inverse']:
                 rm = []
                 for abel in res[direction]:
@@ -99,61 +100,71 @@ class AbelTiming(object):
                 if abel[:-3] not in select:
                     rm.append(abel)
             for x in rm:
-                del res['bs'][x] 
+                del res['bs'][x]
 
         # ---- timing tests for various image sizes nxn
         for ni in n:
             ni = int(ni)
             h, w = ni, ni//2 + 1
-            # We transform a rectangular image, since we are  making the assumption 
+            # We transform a rectangular image, since we are making the assumption
             # that we are transforming just the "right side" of a square image.
             # see: https://github.com/PyAbel/PyAbel/issues/207
-            
-            half_image  = np.random.randn(h, w)    
+
+            half_image  = np.random.randn(h, w)
             whole_image = np.random.randn(h, h)
             # basis set evaluation --------------
             basis = {}
             for method in res['bs'].keys():
                 if ni <= n_max_bs:
-                
+
                     if method[:-3] == 'basex':  # special case
                         # calculate and store basex basis matrix
                         t = default_timer()
                         basis[method[:-3]] = transform[method](w, basis_dir=None)
-                        res['bs'][method].append((default_timer()-t)*1000)
-                    
+                        res['bs'][method].append((default_timer() - t) * 1000)
+
                     elif method[:-3] == 'linbasex':  # special case
                         t = default_timer()
                         basis[method[:-3]] = transform[method](ni)
-                        res['bs'][method].append((default_timer()-t)*1000)
+                        res['bs'][method].append((default_timer() - t) * 1000)
                     else:
                         # calculate and store basis matrix
                         t = default_timer()
                         # store basis calculation. NB a tuple to accomodate basex
-                        basis[method[:-3]] = transform[method](w), 
-                        res['bs'][method].append((default_timer()-t)*1000)
-                        
+                        basis[method[:-3]] = transform[method](w),
+                        res['bs'][method].append((default_timer() - t) * 1000)
+
                 else:
                     basis[method[:-3]] = None,
                     res['bs'][method].append(np.nan)
-               
 
             # Abel transforms ---------------
             for cal in ["forward", "inverse"]:
-                for method in res[cal].keys(): 
-                    if method in basis.keys():
-                        if basis[method][0] is not None:
+                for method in res[cal].keys():
+                    method_b = method.split('(')[0]
+                    if method_b in basis.keys():
+                        if basis[method_b][0] is not None:
                             # have basis calculation
                             if method == 'linbasex':
-                                 # pass a whole image to linbasex
-                                 res[cal][method].append(Timer(
-                                    lambda: transform[method](whole_image, basis[method])).
-                                    timeit(number=transform_repeat)*1000/
-                                    transform_repeat)       
+                                # pass a whole image to linbasex
+                                res[cal][method].append(Timer(
+                                   lambda: transform[method](whole_image, basis[method])).
+                                   timeit(number=transform_repeat) * 1000 /
+                                   transform_repeat)
+                            elif method == 'basex(var)':
+                                # force updating regularization every time
+                                # (the basis itself is cached)
+                                res[cal][method].append(Timer(
+                                   lambda: transform[method](half_image,
+                                               transform['basex_bs'](w,
+                                                   reg=1.0+np.random.random(),
+                                                   basis_dir=None))).
+                                   timeit(number=transform_repeat) * 1000 /
+                                   transform_repeat)
                             else:
                                 res[cal][method].append(Timer(
                                    lambda: transform[method](half_image, basis[method])).
-                                   timeit(number=transform_repeat)*1000/
+                                   timeit(number=transform_repeat) * 1000 /
                                    transform_repeat)
                         else:
                             # no calculation available
@@ -161,17 +172,17 @@ class AbelTiming(object):
                     elif method[:6] == 'direct':  # special case 'direct'
                         if method[7] == 'P' and (ni > n_max_slow):
                             res[cal][method].append(np.nan)
-                        else:     
+                        else:
                             res[cal][method].append(Timer(
                                lambda: transform[method](half_image, backend=method[7:],
-                               direction=cal)).
-                               timeit(number=transform_repeat)*1000/
+                                                         direction=cal)).
+                               timeit(number=transform_repeat) * 1000 /
                                transform_repeat)
                     else:
                         # full calculation for everything else
                         res[cal][method].append(Timer(
                            lambda: transform[method](half_image, direction=cal)).
-                           timeit(number=transform_repeat)*1000/
+                           timeit(number=transform_repeat) * 1000 /
                            transform_repeat)
 
         self.fabel = res['forward']
