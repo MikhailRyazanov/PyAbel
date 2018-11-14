@@ -16,7 +16,7 @@ from . import tools
 
 
 class AbelTiming(object):
-    def __init__(self, n=[301, 501], select=["all", ], n_max_bs=700,
+    def __init__(self, n=[301, 501], select=['all', ], n_max_bs=700,
                  n_max_slow=700, transform_repeat=1):
         """
         Benchmark performance of different iAbel/fAbel implementations.
@@ -48,23 +48,36 @@ class AbelTiming(object):
 
         self.n = n
 
+        # (expression "f1() and False or f2()" ensures that f1() is called
+        #  before f2() and that the overall result is f2())
         transform = {
             'basex': basex.basex_core_transform,
-            'basex(var)': basex.basex_core_transform,
-            'basex_bs': basex.get_bs_cached,
+            'basex(var)': lambda IM, _: basex.basex_core_transform(IM,
+                                            basex.get_bs_cached(IM.shape[1],
+                                               reg=1.0+np.random.random(),
+                                               basis_dir=None)),
+                                        # force updating regularization every
+                                        # time (basis itself is cached)
+            'basex_bs': lambda w: basex.cache_cleanup() and False or
+                                  basex.get_bs_cached(w, basis_dir=None),
             'direct_Python': direct.direct_transform,
             'direct_C': direct.direct_transform,
             'hansenlaw': hansenlaw.hansenlaw_transform,
             'linbasex': linbasex._linbasex_transform_with_basis,
-            'linbasex_bs': linbasex._bs_linbasex,
+            'linbasex_bs': lambda w: linbasex.cache_cleanup() and False or
+                                     linbasex._bs_linbasex(2 * w - 1),
+                                     # linbasex needs full width
             'onion_bordas': onion_bordas.onion_bordas_transform,
             'onion_peeling': dasch.dasch_transform,
-            'onion_peeling_bs': dasch._bs_onion_peeling,
+            'onion_peeling_bs': lambda w: dasch.cache_cleanup() and False or
+                                          dasch._bs_onion_peeling(w),
             'two_point': dasch.dasch_transform,
-            'two_point_bs': dasch._bs_two_point,
+            'two_point_bs': lambda w: dasch.cache_cleanup() and False or
+                                      dasch._bs_two_point(w),
             'three_point': dasch.dasch_transform,
-            'three_point_bs': dasch._bs_three_point,
-         }
+            'three_point_bs': lambda w: dasch.cache_cleanup() and False or
+                                        dasch._bs_three_point(w),
+        }
 
         # result dicts
         res = {}
@@ -81,10 +94,10 @@ class AbelTiming(object):
             res['inverse']['direct_C'] = []
 
         # delete all keys not present in 'select' input parameter
-        if "all" not in select:
+        if 'all' not in select:
             for trans in select:
                 if trans not in res['inverse'].keys():
-                    raise ValueError("'{}' is not a valid transform method".
+                    raise ValueError('"{}" is not a valid transform method'.
                                      format(trans), res['inverse'].keys())
 
             for direction in ['forward', 'inverse']:
@@ -96,8 +109,9 @@ class AbelTiming(object):
                     del res[direction][x]
             # repeat for 'bs' which has append '_bs'
             rm = []
+            select_b = [m.split('(')[0] for m in select]  # before parentheses
             for abel in res['bs']:
-                if abel[:-3] not in select:
+                if abel[:-3] not in select_b:
                     rm.append(abel)
             for x in rm:
                 del res['bs'][x]
@@ -116,56 +130,30 @@ class AbelTiming(object):
             basis = {}
             for method in res['bs'].keys():
                 if ni <= n_max_bs:
-
-                    if method[:-3] == 'basex':  # special case
-                        # calculate and store basex basis matrix
-                        t = default_timer()
-                        basis[method[:-3]] = transform[method](w, basis_dir=None)
-                        res['bs'][method].append((default_timer() - t) * 1000)
-
-                    elif method[:-3] == 'linbasex':  # special case
-                        t = default_timer()
-                        basis[method[:-3]] = transform[method](ni)
-                        res['bs'][method].append((default_timer() - t) * 1000)
-                    else:
-                        # calculate and store basis matrix
-                        t = default_timer()
-                        # store basis calculation. NB a tuple to accomodate basex
-                        basis[method[:-3]] = transform[method](w),
-                        res['bs'][method].append((default_timer() - t) * 1000)
-
+                    # calculate and store basis matrix
+                    t = default_timer()
+                    basis[method[:-3]] = transform[method](w)
+                    res['bs'][method].append((default_timer() - t) * 1000)
                 else:
                     basis[method[:-3]] = None,
                     res['bs'][method].append(np.nan)
 
             # Abel transforms ---------------
-            for cal in ["forward", "inverse"]:
+            for cal in ['forward', 'inverse']:
                 for method in res[cal].keys():
-                    method_b = method.split('(')[0]
+                    method_b = method.split('(')[0]  # part before parentheses
                     if method_b in basis.keys():
                         if basis[method_b][0] is not None:
                             # have basis calculation
                             if method == 'linbasex':
                                 # pass a whole image to linbasex
-                                res[cal][method].append(Timer(
-                                   lambda: transform[method](whole_image, basis[method])).
-                                   timeit(number=transform_repeat) * 1000 /
-                                   transform_repeat)
-                            elif method == 'basex(var)':
-                                # force updating regularization every time
-                                # (the basis itself is cached)
-                                res[cal][method].append(Timer(
-                                   lambda: transform[method](half_image,
-                                               transform['basex_bs'](w,
-                                                   reg=1.0+np.random.random(),
-                                                   basis_dir=None))).
-                                   timeit(number=transform_repeat) * 1000 /
-                                   transform_repeat)
+                                IM = whole_image
                             else:
-                                res[cal][method].append(Timer(
-                                   lambda: transform[method](half_image, basis[method])).
-                                   timeit(number=transform_repeat) * 1000 /
-                                   transform_repeat)
+                                IM = half_image
+                            res[cal][method].append(Timer(
+                               lambda: transform[method](IM, basis[method_b])).
+                               timeit(number=transform_repeat) * 1000 /
+                               transform_repeat)
                         else:
                             # no calculation available
                             res[cal][method].append(np.nan)
