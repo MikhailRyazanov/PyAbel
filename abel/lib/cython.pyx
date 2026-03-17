@@ -123,7 +123,7 @@ cpdef _cabel_hansenlaw_recursion(const double[:, ::1] phi,
     cdef double* x  # state (per row)
     cdef double s  # for running sum
 
-    with nogil, parallel():
+    with nogil, parallel(num_threads=4):
         x = <double*>calloc(K, sizeof(double))  # (thread-local)
         # Parallelized loop over rows (must use "s = s + ..." instead of
         # "s += ..." because Cython interprets "+=" as parallel reduction)
