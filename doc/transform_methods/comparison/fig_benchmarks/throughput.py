@@ -55,7 +55,7 @@ def plot(directory, xlim, ylim, va):
                  xytext=(0, -4 if va == 'top' else 2),
                  textcoords='offset points')
 
-    plt.legend(ncol=3)
+    plt.legend(ncols=2, loc=(0.05, 0.01))
 
     plt.tight_layout(pad=0.1)
 
